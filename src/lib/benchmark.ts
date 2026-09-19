@@ -61,8 +61,13 @@ function runTest(tc: TestCase): TestResult {
   const result = checkText(tc.input, { styleMode: 'simple' });
 
   // Filter out punctuation-only corrections (period-at-end, comma-after-salom)
-  // since those are structural checks, not word-level corrections.
-  const wordCorrections = result.corrections.filter(c => c.type !== 'punctuation');
+  // since those are structural checks, not word-level corrections. RuleEngine
+  // cases measure the named rule in isolation: an unrelated lexical warning
+  // must not turn a rule's negative case into a false positive.
+  const isRuleEngineCase = RULE_ENGINE_CATEGORIES.includes(tc.category as typeof RULE_ENGINE_CATEGORIES[number]);
+  const wordCorrections = result.corrections.filter(c =>
+    c.type !== 'punctuation' && (!isRuleEngineCase || c.ruleId === tc.category)
+  );
 
   if (tc.expectError) {
     // We expect an error to be detected
