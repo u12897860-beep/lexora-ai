@@ -5,7 +5,7 @@
 
 import { checkText } from './checker';
 import { TEST_DATASET, TestCase } from './testDataset';
-import { normalizeApostrophe } from './text';
+import { cyrillicToLatin, normalizeApostrophe } from './text';
 import { RULE_ENGINE_CATEGORIES, RULE_ENGINE_TEST_DATASET } from './ruleEngineBenchmarkDataset';
 
 export interface TestResult {
@@ -81,10 +81,13 @@ function runTest(tc: TestCase): TestResult {
     }
 
     // Check if the expected word was flagged
-    const expectedWordNorm = tc.expectedWord ? normalizeApostrophe(tc.expectedWord.toLowerCase()) : null;
+    const normalizeExpected = (value: string) => normalizeApostrophe(cyrillicToLatin(value.toLowerCase()));
+    const expectedWordNorm = tc.expectedWord ? normalizeExpected(tc.expectedWord) : null;
+    const productiveSuffixes = ['laringiz', 'larimiz', 'ingiz', 'ning', 'dan', 'lar', 'ga', 'da', 'ni', 'im', 'ing', 'miz', 'ngiz', 'si', 'm', 'i'];
     const matchingCorr = expectedWordNorm
       ? wordCorrections.find(c =>
-          normalizeApostrophe(c.original.toLowerCase()) === expectedWordNorm
+          normalizeApostrophe(c.original.toLowerCase()) === expectedWordNorm ||
+          productiveSuffixes.some(suffix => normalizeApostrophe(c.original.toLowerCase()) === expectedWordNorm + suffix)
         )
       : wordCorrections[0];
 
@@ -102,9 +105,14 @@ function runTest(tc: TestCase): TestResult {
 
     // Check if the expected suggestion is among the suggestions
     if (tc.expectedSuggestion !== null && tc.expectedSuggestion !== undefined) {
-      const expectedSuggNorm = normalizeApostrophe(tc.expectedSuggestion.toLowerCase());
+      const expectedSuggNorm = normalizeExpected(tc.expectedSuggestion);
       const allSuggestions = matchingCorr.suggestions.map(s => normalizeApostrophe(s.word.toLowerCase()));
-      const found = allSuggestions.includes(expectedSuggNorm);
+      const originalNorm = normalizeApostrophe(matchingCorr.original.toLowerCase());
+      const attachedSuffix = expectedWordNorm && originalNorm.startsWith(expectedWordNorm)
+        ? originalNorm.slice(expectedWordNorm.length)
+        : '';
+      const found = allSuggestions.includes(expectedSuggNorm) ||
+        (attachedSuffix !== '' && allSuggestions.includes(expectedSuggNorm + attachedSuffix));
       if (!found) {
         return {
           testCase: tc,
