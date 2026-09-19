@@ -6,6 +6,7 @@
 import { MorphAnalysis } from './types';
 import { DICTIONARY, DictEntry } from './dictionary';
 import { normalizeApostrophe } from './text';
+import { validateCaseSuffix } from './phonetics';
 
 // Uzbek suffix inventory (order matters — suffixes attach in sequence).
 // These are the productive suffixes of modern literary Uzbek (Latin script).
@@ -232,8 +233,6 @@ export function isValidForm(word: string): boolean {
     // Find which case suffix was used
     for (const [suf, caseType] of CASE_SUFFIXES) {
       if (w.endsWith(suf) && caseType === analysis.case) {
-        // Check phonetic validity via the suffix engine
-        const { validateCaseSuffix } = require('./phonetics');
         const validation = validateCaseSuffix(analysis.stem, suf);
         if (!validation.isPhoneticallyValid) return false;
         break;

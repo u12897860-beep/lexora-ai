@@ -18,13 +18,11 @@
 //     0.15 * contextScore +
 //     0.10 * phoneticScore
 
-import { levenshtein, jaroWinkler, ngramSimilarity, keyboardTypoScore } from './fuzzy';
+import { levenshtein, jaroWinkler, ngramSimilarity, keyboardTypoScore } from './stringSimilarity';
 import { inDictionary, analyzeWord, getDictEntry, isValidForm } from './morphology';
 import { phoneticSimilarity, phoneticCode, splitCaseSuffix, validateCaseSuffix } from './phonetics';
 import { normalizeApostrophe } from './text';
-import { analyzeContext, contextScore, ContextInfo, ExpectedCase } from './contextEngine';
-import { DictEntry } from './dictionary';
-import { getCorrectCaseSuffix } from './phonetics';
+import { ContextInfo, ExpectedCase } from './contextEngine';
 
 export interface RankedCandidate {
   word: string;
