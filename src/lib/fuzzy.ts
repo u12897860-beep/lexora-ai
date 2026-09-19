@@ -4,7 +4,7 @@
 
 import { DICTIONARY } from './dictionary';
 import { normalizeApostrophe } from './text';
-import { getAllForms, inDictionary, isValidForm } from './morphology';
+import { analyzeWord, getAllForms, inDictionary } from './morphology';
 import { splitCaseSuffix } from './phonetics';
 import { analyzeContext, ContextInfo } from './contextEngine';
 import { rankCandidates, RankedCandidate } from './candidateRanker';
@@ -42,6 +42,7 @@ interface Candidate {
   word: string;
   freq: number;
   pos: string;
+  suffixDepth: number;
 }
 let candidatePool: Candidate[] | null = null;
 
@@ -60,6 +61,7 @@ function getCandidatePool(): Candidate[] {
       word: form,
       freq: formToFreq.get(form) ?? 999,
       pos: '',
+      suffixDepth: analyzeWord(form)?.suffixes.length ?? 0,
     });
   }
   candidatePool = pool;
@@ -152,6 +154,7 @@ export function findCandidates(
 ): ScoredCandidate[] {
   const normalized = normalizeApostrophe(input.toLowerCase());
   if (normalized.length < 2) return [];
+  const inputAnalysis = analyzeWord(normalized);
 
   // Analyze context if provided
   let contextInfo: ContextInfo | undefined;
@@ -164,7 +167,7 @@ export function findCandidates(
   const customCandidates: Candidate[] = [];
   if (customDict) {
     for (const w of customDict) {
-      customCandidates.push({ word: normalizeApostrophe(w.toLowerCase()), freq: 1, pos: '' });
+      customCandidates.push({ word: normalizeApostrophe(w.toLowerCase()), freq: 1, pos: '', suffixDepth: 0 });
     }
   }
   const fullPool = customCandidates.length ? [...pool, ...customCandidates] : pool;
@@ -176,6 +179,13 @@ export function findCandidates(
   for (const candidate of fullPool) {
     const cand = candidate.word;
     if (cand === normalized) continue;
+
+    // Do not let fully synthesized, multi-layer inflections crowd out a
+    // simpler correction when the input itself has no matching morphological
+    // structure. Multi-suffix typos are still handled below by stem+suffix
+    // decomposition, which preserves endings actually present in the input.
+    if (!inputAnalysis && candidate.suffixDepth > 1) continue;
+
     const lenDiff = Math.abs(cand.length - normalized.length);
     if (lenDiff > 3) continue;
 

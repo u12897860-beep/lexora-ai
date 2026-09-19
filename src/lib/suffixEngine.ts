@@ -10,7 +10,7 @@
 // After voiced consonants and vowels, voiceless variants are ERRORS.
 
 import { normalizeApostrophe } from './text';
-import { inDictionary } from './morphology';
+import { inDictionary, isValidForm } from './morphology';
 import { validateCaseSuffix, splitCaseSuffix, endsWithVoiceless } from './phonetics';
 
 export interface SuffixAnalysis {
@@ -47,7 +47,9 @@ export function analyzeCaseSuffix(word: string): SuffixAnalysis | null {
   if (!caseType) return null;
 
   // Check if the stem is a known word (dictionary or valid form)
-  const stemValid = inDictionary(stem);
+  // The case suffix is outermost. Its base can itself be a productive form
+  // (kitoblarim+da), not merely a bare dictionary root.
+  const stemValid = inDictionary(stem) || isValidForm(stem);
 
   // Validate the suffix against the stem's phonology
   const validation = validateCaseSuffix(stem, suffix);

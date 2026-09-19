@@ -1,73 +1,83 @@
-// Morphology Engine for Uzbek (agglutinative language).
-// Decomposes a word into stem + suffixes, determines POS, number, case,
-// possessive, tense, polarity. Also generates valid inflected forms
-// from a dictionary root so we can recognize word forms beyond the root.
+// Morphology Engine v2 for Uzbek.
+//
+// Nominal morphology is parsed as a sequence rather than as unrelated string
+// endings: ROOT + (OTHER) + (PLURAL) + (POSSESSIVE) + (CASE).  Keeping the
+// slots explicit prevents an ending such as -i or -lar from being removed
+// repeatedly or in an impossible order.
 
-import { MorphAnalysis } from './types';
+import { MorphAnalysis, PartOfSpeech } from './types';
 import { DICTIONARY, DictEntry } from './dictionary';
 import { normalizeApostrophe } from './text';
-import { validateCaseSuffix } from './phonetics';
+import { endsWithVowel, validateCaseSuffix } from './phonetics';
 
-// Uzbek suffix inventory (order matters — suffixes attach in sequence).
-// These are the productive suffixes of modern literary Uzbek (Latin script).
+type NominalCase = Exclude<MorphAnalysis['case'], 'nom' | null>;
 
-// Plural
-const PLURAL_SUFFIXES = ['lar', 'larim', 'laringiz', 'lari', 'larimiz'];
-
-// Possessive
-const POSSESSIVE_SUFFIXES: Array<[string, string]> = [
-  ['im', '1sg'], ['m', '1sg'],
-  ['ing', '2sg'], ['ng', '2sg'],
-  ['i', '3sg'],
-  ['imiz', '1pl'], ['miz', '1pl'],
-  ['ingiz', '2sg/formal'], ['ngiz', '2sg/formal'],
-  ['lari', '3pl'], ['si', '3sg/3pl'],
-];
-
-// Case (attach after plural/possessive)
-// Includes both literary standard (ga, da, dan, ni, ning) and
-// dialectal/phonetic variants (ka, qa, ta, tan) which appear after
-// voiceless consonants. The suffix engine validates correctness.
-const CASE_SUFFIXES: Array<[string, string]> = [
-  ['ni', 'acc'],
-  ['ning', 'gen'],
-  ['ga', 'dat'], ['ka', 'dat'], ['qa', 'dat'],
-  ['da', 'loc'], ['ta', 'loc'],
-  ['dan', 'abl'], ['tan', 'abl'],
-];
-
-// Verbal suffixes
-const VERB_NEGATION = ['ma', 'me'];
-const VERB_TENSE_SUFFIXES: Array<[string, string]> = [
-  ['dim', 'past_1sg'], ['ding', 'past_2sg'], ['di', 'past_3sg'],
-  ['dik', 'past_1pl'], ['dingiz', 'past_2sg/formal'], ['dilar', 'past_3pl'],
-  ['man', 'pres_1sg'], ['san', 'pres_2sg'], ['di', 'pres_3sg'],
-  ['miz', 'pres_1pl'], ['siz', 'pres_2sg/formal'], ['dilar', 'pres_3pl'],
-  ['yapman', 'cont_1sg'], ['yapsan', 'cont_2sg'], ['yapdi', 'cont_3sg'],
-  ['yapmiz', 'cont_1pl'], ['yapsiz', 'cont_2pl'], ['yapdilar', 'cont_3pl'],
-  ['yman', 'pres_1sg'], ['ysan', 'pres_2sg'], ['ydi', 'pres_3sg'],
-  ['ymiz', 'pres_1pl'], ['ysiz', 'pres_2pl'], ['ydilar', 'pres_3pl'],
-  ['aman', 'pres_1sg'], ['asan', 'pres_2sg'], ['adi', 'pres_3sg'],
-  ['amiz', 'pres_1pl'], ['asiz', 'pres_2pl'], ['adilar', 'pres_3pl'],
-  ['ganim', 'pastpart_1sg'], ['ganing', 'pastpart_2sg'], ['gani', 'pastpart_3sg'],
-  ['gan', 'pastpart'], ['qan', 'pastpart'],
-  ['yotir', 'cont_inf'], ['yotman', 'cont_1sg'], ['yotsan', 'cont_2sg'],
-  ['yotmiz', 'cont_1pl'], ['yotsiz', 'cont_2pl'],
-];
-
-// Build a Set of all dictionary words (normalized) for quick exact lookup.
-const DICT_MAP = new Map<string, DictEntry>();
-for (const entry of DICTIONARY) {
-  DICT_MAP.set(normalizeApostrophe(entry.word), entry);
-  if (entry.variants) {
-    for (const v of entry.variants) {
-      DICT_MAP.set(normalizeApostrophe(v), entry);
-    }
-  }
+interface SuffixSlot {
+  value: string;
+  label: string;
 }
 
-// Set of all dictionary stems for morphology matching
-const DICT_STEMS = new Set<string>(DICT_MAP.keys());
+interface ParsedNominal {
+  stem: string;
+  suffixes: string[];
+  plural: boolean;
+  possessive: string | null;
+  caseType: NominalCase | null;
+  caseBase: string | null;
+  knownStem: boolean;
+}
+
+const CASE_SUFFIXES: readonly SuffixSlot[] = [
+  { value: 'ning', label: 'gen' }, { value: 'dan', label: 'abl' },
+  { value: 'tan', label: 'abl' }, { value: 'ga', label: 'dat' },
+  { value: 'ka', label: 'dat' }, { value: 'qa', label: 'dat' },
+  { value: 'da', label: 'loc' }, { value: 'ta', label: 'loc' },
+  { value: 'ni', label: 'acc' },
+];
+
+// Longest first. Vowel-final stems use the short/buffered series, while
+// consonant-final stems use the vowel-initial series.
+const POSSESSIVE_SUFFIXES: readonly SuffixSlot[] = [
+  { value: 'ingiz', label: '2sg/formal' }, { value: 'imiz', label: '1pl' },
+  { value: 'ngiz', label: '2sg/formal' }, { value: 'miz', label: '1pl' },
+  { value: 'ing', label: '2sg' }, { value: 'si', label: '3sg/3pl' },
+  { value: 'im', label: '1sg' }, { value: 'ng', label: '2sg' },
+  { value: 'm', label: '1sg' }, { value: 'i', label: '3sg' },
+];
+
+// Productive derivational/postpositional endings which may precede nominal
+// inflection. They are accepted only when the resulting root is known.
+const OTHER_SUFFIXES = ['gacha', 'dagi', 'lik', 'chi'] as const;
+
+const VERB_NEGATION = ['ma', 'me'] as const;
+const VERB_TENSE_SUFFIXES: readonly SuffixSlot[] = [
+  { value: 'yapdilar', label: 'cont_3pl' }, { value: 'yapman', label: 'cont_1sg' },
+  { value: 'yapsan', label: 'cont_2sg' }, { value: 'yapmiz', label: 'cont_1pl' },
+  { value: 'yapsiz', label: 'cont_2pl' }, { value: 'yapdi', label: 'cont_3sg' },
+  { value: 'dingiz', label: 'past_2sg/formal' }, { value: 'dilar', label: 'past_3pl' },
+  { value: 'ydilar', label: 'pres_3pl' }, { value: 'adilar', label: 'pres_3pl' },
+  { value: 'ganim', label: 'pastpart_1sg' }, { value: 'ganing', label: 'pastpart_2sg' },
+  { value: 'gani', label: 'pastpart_3sg' }, { value: 'dim', label: 'past_1sg' },
+  { value: 'ding', label: 'past_2sg' }, { value: 'dik', label: 'past_1pl' },
+  { value: 'yman', label: 'pres_1sg' }, { value: 'ysan', label: 'pres_2sg' },
+  { value: 'ymiz', label: 'pres_1pl' }, { value: 'ysiz', label: 'pres_2pl' },
+  { value: 'aman', label: 'pres_1sg' }, { value: 'asan', label: 'pres_2sg' },
+  { value: 'amiz', label: 'pres_1pl' }, { value: 'asiz', label: 'pres_2pl' },
+  { value: 'gan', label: 'pastpart' }, { value: 'qan', label: 'pastpart' },
+  { value: 'man', label: 'pres_1sg' }, { value: 'san', label: 'pres_2sg' },
+  { value: 'miz', label: 'pres_1pl' }, { value: 'siz', label: 'pres_2sg/formal' },
+  { value: 'adi', label: 'pres_3sg' }, { value: 'ydi', label: 'pres_3sg' },
+  { value: 'dim', label: 'past_1sg' }, { value: 'di', label: 'past_3sg' },
+];
+
+const DICT_MAP = new Map<string, DictEntry>();
+for (const entry of DICTIONARY) {
+  DICT_MAP.set(normalizeApostrophe(entry.word.toLowerCase()), entry);
+  for (const variant of entry.variants ?? []) {
+    DICT_MAP.set(normalizeApostrophe(variant.toLowerCase()), entry);
+  }
+}
+const DICT_STEMS = new Set(DICT_MAP.keys());
 
 export function inDictionary(word: string): boolean {
   return DICT_MAP.has(normalizeApostrophe(word.toLowerCase()));
@@ -77,205 +87,175 @@ export function getDictEntry(word: string): DictEntry | undefined {
   return DICT_MAP.get(normalizeApostrophe(word.toLowerCase()));
 }
 
-/**
- * Try to find a dictionary stem by stripping known suffixes.
- * Returns the stem + list of suffixes stripped, or null.
- */
-function stripSuffixes(word: string): { stem: string; suffixes: string[] } | null {
-  const w = normalizeApostrophe(word.toLowerCase());
-  // Try stripping case suffix first (outermost layer), then possessive, then plural
-  // We try all combinations greedily.
-  for (const caseSuf of CASE_SUFFIXES.map(s => s[0])) {
-    if (w.endsWith(caseSuf) && w.length > caseSuf.length + 2) {
-      const afterCase = w.slice(0, -caseSuf.length);
-      // Check stem directly
-      if (DICT_STEMS.has(afterCase)) return { stem: afterCase, suffixes: [caseSuf] };
-      // Try possessive
-      for (const possSuf of POSSESSIVE_SUFFIXES.map(s => s[0])) {
-        if (afterCase.endsWith(possSuf) && afterCase.length > possSuf.length + 2) {
-          const afterPoss = afterCase.slice(0, -possSuf.length);
-          if (DICT_STEMS.has(afterPoss)) return { stem: afterPoss, suffixes: [possSuf, caseSuf] };
-          // Try plural
-          for (const plurSuf of PLURAL_SUFFIXES) {
-            if (afterPoss.endsWith(plurSuf) && afterPoss.length > plurSuf.length + 2) {
-              const afterPlur = afterPoss.slice(0, -plurSuf.length);
-              if (DICT_STEMS.has(afterPlur)) return { stem: afterPlur, suffixes: [plurSuf, possSuf, caseSuf] };
-            }
-          }
-        }
-      }
-      // Try plural directly (without possessive)
-      for (const plurSuf of PLURAL_SUFFIXES) {
-        if (afterCase.endsWith(plurSuf) && afterCase.length > plurSuf.length + 2) {
-          const afterPlur = afterCase.slice(0, -plurSuf.length);
-          if (DICT_STEMS.has(afterPlur)) return { stem: afterPlur, suffixes: [plurSuf, caseSuf] };
-        }
-      }
-    }
-  }
-  // Try possessive only (no case)
-  for (const possSuf of POSSESSIVE_SUFFIXES.map(s => s[0])) {
-    if (w.endsWith(possSuf) && w.length > possSuf.length + 2) {
-      const afterPoss = w.slice(0, -possSuf.length);
-      if (DICT_STEMS.has(afterPoss)) return { stem: afterPoss, suffixes: [possSuf] };
-      // Try plural under possessive
-      for (const plurSuf of PLURAL_SUFFIXES) {
-        if (afterPoss.endsWith(plurSuf) && afterPoss.length > plurSuf.length + 2) {
-          const afterPlur = afterPoss.slice(0, -plurSuf.length);
-          if (DICT_STEMS.has(afterPlur)) return { stem: afterPlur, suffixes: [plurSuf, possSuf] };
-        }
-      }
-    }
-  }
-  // Try plural only
-  for (const plurSuf of PLURAL_SUFFIXES) {
-    if (w.endsWith(plurSuf) && w.length > plurSuf.length + 2) {
-      const afterPlur = w.slice(0, -plurSuf.length);
-      if (DICT_STEMS.has(afterPlur)) return { stem: afterPlur, suffixes: [plurSuf] };
-    }
-  }
-  // Try verb suffixes
-  for (const [tenseSuf] of VERB_TENSE_SUFFIXES) {
-    if (w.endsWith(tenseSuf) && w.length > tenseSuf.length + 2) {
-      const stem = w.slice(0, -tenseSuf.length);
-      if (DICT_STEMS.has(stem)) return { stem, suffixes: [tenseSuf] };
-      // Try with negation
-      for (const negSuf of VERB_NEGATION) {
-        if (stem.endsWith(negSuf) && stem.length > negSuf.length + 2) {
-          const negStem = stem.slice(0, -negSuf.length);
-          if (DICT_STEMS.has(negStem)) return { stem: negStem, suffixes: [negSuf, tenseSuf] };
-        }
-      }
+function removeEnding(word: string, endings: readonly SuffixSlot[]): { base: string; slot: SuffixSlot } | null {
+  for (const slot of endings) {
+    if (word.endsWith(slot.value) && word.length - slot.value.length >= 3) {
+      return { base: word.slice(0, -slot.value.length), slot };
     }
   }
   return null;
 }
 
+function possessiveFits(base: string, suffix: string): boolean {
+  return endsWithVowel(base)
+    ? ['m', 'ng', 'si', 'miz', 'ngiz'].includes(suffix)
+    : ['im', 'ing', 'i', 'imiz', 'ingiz'].includes(suffix);
+}
+
+/** Parse every nominal slot from the outside in, then validate inside out. */
+function parseNominal(word: string): ParsedNominal | null {
+  let remainder = word;
+  const suffixesFromOutside: string[] = [];
+  let caseType: NominalCase | null = null;
+  let caseBase: string | null = null;
+  let possessive: string | null = null;
+  let plural = false;
+
+  const caseMatch = removeEnding(remainder, CASE_SUFFIXES);
+  if (caseMatch) {
+    caseType = caseMatch.slot.label as NominalCase;
+    caseBase = caseMatch.base;
+    remainder = caseMatch.base;
+    suffixesFromOutside.push(caseMatch.slot.value);
+  }
+
+  const possessiveMatch = removeEnding(remainder, POSSESSIVE_SUFFIXES);
+  if (possessiveMatch && possessiveFits(possessiveMatch.base, possessiveMatch.slot.value)) {
+    possessive = possessiveMatch.slot.label;
+    remainder = possessiveMatch.base;
+    suffixesFromOutside.push(possessiveMatch.slot.value);
+  }
+
+  if (remainder.endsWith('lar') && remainder.length > 6) {
+    plural = true;
+    remainder = remainder.slice(0, -3);
+    suffixesFromOutside.push('lar');
+  }
+
+  for (const suffix of OTHER_SUFFIXES) {
+    if (remainder.endsWith(suffix) && remainder.length - suffix.length >= 3) {
+      remainder = remainder.slice(0, -suffix.length);
+      suffixesFromOutside.push(suffix);
+      break;
+    }
+  }
+
+  if (suffixesFromOutside.length === 0) return null;
+  const knownStem = DICT_STEMS.has(remainder);
+  // Unknown roots are intentionally accepted only with a strong structural
+  // signal: at least two ordered inflection slots and a substantial root.
+  // This protects new names/terms without turning arbitrary typo+ending
+  // strings into valid words.
+  if (!knownStem && (suffixesFromOutside.length < 2 || remainder.length < 4)) return null;
+
+  return {
+    stem: remainder,
+    suffixes: suffixesFromOutside.reverse(),
+    plural,
+    possessive,
+    caseType,
+    caseBase,
+    knownStem,
+  };
+}
+
+function analyzeVerb(word: string): MorphAnalysis | null {
+  for (const tense of VERB_TENSE_SUFFIXES) {
+    if (!word.endsWith(tense.value) || word.length - tense.value.length < 2) continue;
+    let stem = word.slice(0, -tense.value.length);
+    const suffixes = [tense.value];
+    let polarity: 'pos' | 'neg' = 'pos';
+    const negation = VERB_NEGATION.find(value => stem.endsWith(value));
+    if (negation) {
+      stem = stem.slice(0, -negation.length);
+      suffixes.unshift(negation);
+      polarity = 'neg';
+    }
+    const entry = DICT_MAP.get(stem);
+    if (!entry || entry.pos !== 'verb') continue;
+    return { stem, suffixes, pos: entry.pos, number: null, case: null, posessive: null, tense: tense.label, polarity };
+  }
+  return null;
+}
+
 export function analyzeWord(word: string): MorphAnalysis | null {
-  const w = normalizeApostrophe(word.toLowerCase());
-  // Direct dictionary hit
-  const direct = DICT_MAP.get(w);
+  const normalized = normalizeApostrophe(word.toLowerCase());
+  const direct = DICT_MAP.get(normalized);
   if (direct) {
+    return { stem: normalized, suffixes: [], pos: direct.pos, number: null, case: null, posessive: null, tense: null, polarity: null };
+  }
+
+  const nominal = parseNominal(normalized);
+  if (nominal) {
+    const entry = DICT_MAP.get(nominal.stem);
     return {
-      stem: w,
-      suffixes: [],
-      pos: direct.pos,
-      number: null,
-      case: null,
-      posessive: null,
+      stem: nominal.stem,
+      suffixes: nominal.suffixes,
+      pos: entry?.pos ?? null,
+      number: nominal.plural ? 'plural' : 'singular',
+      case: nominal.caseType,
+      posessive: nominal.possessive,
       tense: null,
       polarity: null,
     };
   }
-  // Try stripping suffixes
-  const stripped = stripSuffixes(word);
-  if (!stripped) return null;
-  const stemEntry = DICT_MAP.get(stripped.stem);
-  const pos = stemEntry?.pos ?? null;
-  const suffixes = stripped.suffixes;
-  let number: 'singular' | 'plural' | null = null;
-  let caseType: MorphAnalysis['case'] = null;
-  let posessive: string | null = null;
-  let tense: string | null = null;
-  let polarity: 'pos' | 'neg' | null = null;
-
-  for (const suf of suffixes) {
-    if (PLURAL_SUFFIXES.includes(suf)) number = 'plural';
-    const possMatch = POSSESSIVE_SUFFIXES.find(s => s[0] === suf);
-    if (possMatch) posessive = possMatch[1];
-    const caseMatch = CASE_SUFFIXES.find(s => s[0] === suf);
-    if (caseMatch) caseType = caseMatch[1] as MorphAnalysis['case'];
-    const tenseMatch = VERB_TENSE_SUFFIXES.find(s => s[0] === suf);
-    if (tenseMatch) tense = tenseMatch[1];
-    if (VERB_NEGATION.includes(suf)) polarity = 'neg';
-  }
-  return { stem: stripped.stem, suffixes, pos, number, case: caseType, posessive, tense, polarity };
+  return analyzeVerb(normalized);
 }
 
-/**
- * Generate all valid inflected forms from a dictionary root.
- * Used to build a larger recognition set from roots.
- */
-export function generateForms(root: string): string[] {
-  const forms = new Set<string>([root]);
-  // Plural
-  for (const p of ['lar']) forms.add(root + p);
-  // Possessive
-  for (const [p] of POSSESSIVE_SUFFIXES) {
-    forms.add(root + p);
-    forms.add(root + 'lar' + p);
-  }
-  // Case
-  for (const [c] of CASE_SUFFIXES) {
-    forms.add(root + c);
-    forms.add(root + 'lar' + c);
-    forms.add(root + 'larim' + c.replace('ni', 'ni').replace('ga', 'ga'));
-  }
-  // Verb forms
-  for (const [t] of VERB_TENSE_SUFFIXES) {
-    forms.add(root + t);
-  }
-  return Array.from(forms);
-}
-
-/**
- * Check if a word is a valid inflected form of a dictionary root.
- * Also validates that case suffixes are phonetically correct.
- */
 export function isValidForm(word: string): boolean {
   if (inDictionary(word)) return true;
-  const analysis = analyzeWord(word);
-  if (!analysis) return false;
+  const normalized = normalizeApostrophe(word.toLowerCase());
+  const nominal = parseNominal(normalized);
+  if (nominal) {
+    if (nominal.caseType && nominal.caseBase) {
+      const suffix = nominal.suffixes[nominal.suffixes.length - 1];
+      if (!validateCaseSuffix(nominal.caseBase, suffix).isPhoneticallyValid) return false;
+    }
+    return true;
+  }
+  return analyzeVerb(normalized) !== null;
+}
 
-  // If the word has a case suffix, validate it phonetically
-  if (analysis.case) {
-    const w = normalizeApostrophe(word.toLowerCase());
-    // Find which case suffix was used
-    for (const [suf, caseType] of CASE_SUFFIXES) {
-      if (w.endsWith(suf) && caseType === analysis.case) {
-        const validation = validateCaseSuffix(analysis.stem, suf);
-        if (!validation.isPhoneticallyValid) return false;
-        break;
-      }
+export function generateForms(root: string): string[] {
+  const normalized = normalizeApostrophe(root.toLowerCase());
+  const forms = new Set<string>([normalized]);
+  const cases = CASE_SUFFIXES.map(slot => slot.value);
+  for (const plural of ['', 'lar']) {
+    const numberBase = normalized + plural;
+    const possessives = endsWithVowel(numberBase)
+      ? ['m', 'ng', 'si', 'miz', 'ngiz']
+      : ['im', 'ing', 'i', 'imiz', 'ingiz'];
+    const bases = [numberBase, ...possessives.map(possessive => numberBase + possessive)];
+    for (const base of bases) {
+      forms.add(base);
+      for (const caseSuffix of cases) forms.add(base + caseSuffix);
     }
   }
-  return true;
+  for (const tense of VERB_TENSE_SUFFIXES) forms.add(normalized + tense.value);
+  return [...forms];
 }
 
 export function getStem(word: string): string | null {
-  const a = analyzeWord(word);
-  return a?.stem ?? null;
+  return analyzeWord(word)?.stem ?? null;
 }
 
-export function getPartOfSpeech(word: string): import('./types').PartOfSpeech | null {
-  const a = analyzeWord(word);
-  return a?.pos ?? null;
+export function getPartOfSpeech(word: string): PartOfSpeech | null {
+  return analyzeWord(word)?.pos ?? null;
 }
 
-/**
- * Build a large Set of all recognized words (roots + generated forms).
- * Cached after first call.
- */
 let allFormsCache: Set<string> | null = null;
 export function getAllForms(): Set<string> {
   if (allFormsCache) return allFormsCache;
-  const set = new Set<string>();
+  const forms = new Set<string>();
   for (const entry of DICTIONARY) {
-    const w = normalizeApostrophe(entry.word);
-    set.add(w);
-    if (entry.variants) for (const v of entry.variants) set.add(normalizeApostrophe(v));
-    // Generate noun forms for nouns
-    if (entry.pos === 'noun' || entry.pos === 'adj') {
-      for (const f of generateForms(w)) set.add(f);
-    }
-    if (entry.variants) {
-      for (const v of entry.variants) {
-        if (entry.pos === 'noun' || entry.pos === 'adj') {
-          for (const f of generateForms(normalizeApostrophe(v))) set.add(f);
-        }
+    for (const root of [entry.word, ...(entry.variants ?? [])]) {
+      const normalized = normalizeApostrophe(root.toLowerCase());
+      forms.add(normalized);
+      if (entry.pos === 'noun' || entry.pos === 'adj') {
+        for (const form of generateForms(normalized)) forms.add(form);
       }
     }
   }
-  allFormsCache = set;
-  return set;
+  allFormsCache = forms;
+  return forms;
 }
