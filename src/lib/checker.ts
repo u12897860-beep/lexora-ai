@@ -20,6 +20,7 @@ import { analyzeCaseSuffix } from './suffixEngine';
 import { analyzeContext, ContextInfo } from './contextEngine';
 import { isNamedEntity, isNamedEntityWithSuffix, isLikelyProperNoun, isTechnicalTerm } from './namedEntity';
 import { SLANG } from './dictionary';
+import { applyRuleEngine } from './ruleEngine';
 
 // Preserve capitalization from original word
 function preserveCase(original: string, replacement: string): string {
@@ -125,8 +126,11 @@ export function checkText(text: string, options: CheckOptions = {}): CheckResult
   const { customDictionary = [], styleMode = 'simple', autoCorrect = false } = options;
   const customSet = new Set(customDictionary.map(w => normalizeApostrophe(w.toLowerCase())));
   const tokens = tokenize(text);
-  const corrections: Correction[] = [];
   const script = detectScript(text);
+  // RuleEngine runs after normalization/tokenization and before dictionary and
+  // candidate processing. Its spans suppress duplicate lower-level reports.
+  const ruleCorrections = script === 'latin' ? applyRuleEngine(text) : [];
+  const corrections: Correction[] = [...ruleCorrections];
 
   // If text is Cyrillic, transliterate to Latin for analysis
   const analyzeText = script === 'cyrillic' ? cyrToLatMap(text) : text;
@@ -140,6 +144,7 @@ export function checkText(text: string, options: CheckOptions = {}): CheckResult
   for (const token of (script === 'cyrillic' ? analyzeTokens : tokens)) {
     if (!token.isWord) continue;
     wordIndex++;
+    if (ruleCorrections.some(correction => token.start < correction.end && token.end > correction.start)) continue;
     const word = token.text;
     const isFirstWord = wordIndex === 0;
 
