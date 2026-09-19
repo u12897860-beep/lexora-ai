@@ -4,17 +4,40 @@
 
 import { DICTIONARY } from './dictionary';
 import { normalizeApostrophe } from './text';
-import { getAllForms } from './morphology';
+import { getAllForms, inDictionary, isValidForm } from './morphology';
 import { splitCaseSuffix } from './phonetics';
 import { analyzeContext, ContextInfo } from './contextEngine';
 import { rankCandidates, RankedCandidate } from './candidateRanker';
+import { levenshtein } from './stringSimilarity';
 
 // Re-export similarity functions for backward compatibility
 export { levenshtein, jaro, jaroWinkler, ngramSimilarity, keyboardTypoScore } from './stringSimilarity';
 
-import { levenshtein } from './stringSimilarity';
+// ── Suffix inventory for decomposition ──────────────────────────────
+// These must match the morphology engine's suffix lists.
+// Ordered longest-first to prefer maximal suffix matches.
 
-// Build the candidate pool: dictionary words + all generated forms.
+const ALL_SUFFIXES: string[] = [
+  // Case suffixes (longest first)
+  'laringiz', 'larimiz', 'larim', 'lari', 'laring', 'lar',
+  'ning', 'dan', 'tan', 'dilar', 'dingiz',
+  'ga', 'ka', 'qa', 'da', 'ta', 'ni',
+  'dim', 'dik', 'man', 'miz', 'san', 'siz',
+  'im', 'ing', 'miz', 'ngiz', 'lari', 'si',
+  'gan', 'qan', 'di', 'gan', 'ib',
+  // Short verb/person suffixes
+  'm', 'i', 'ng', 'si',
+];
+
+// Minimum stem length after suffix stripping — prevents aggressive stripping
+// of short words where the "suffix" is coincidental.
+const MIN_STEM_LENGTH = 3;
+
+// Maximum edit distance for stem fuzzy matching
+const MAX_STEM_EDIT_DISTANCE = 2;
+
+// ── Candidate pool ──────────────────────────────────────────────────
+
 interface Candidate {
   word: string;
   freq: number;
@@ -43,11 +66,77 @@ function getCandidatePool(): Candidate[] {
   return pool;
 }
 
+// Dictionary roots only (for stem-level fuzzy matching)
+let dictRootsCache: string[] | null = null;
+function getDictRoots(): string[] {
+  if (dictRootsCache) return dictRootsCache;
+  const roots = new Set<string>();
+  for (const entry of DICTIONARY) {
+    roots.add(normalizeApostrophe(entry.word));
+    if (entry.variants) for (const v of entry.variants) roots.add(normalizeApostrophe(v));
+  }
+  dictRootsCache = Array.from(roots);
+  return dictRootsCache;
+}
+
 export interface ScoredCandidate {
   word: string;
   score: number;      // 0-1 confidence
   reason: string;
   errorType?: string;
+}
+
+/**
+ * Generate candidates by decomposing input into stem + suffix,
+ * fuzzy-matching the stem against dictionary roots, and reassembling.
+ *
+ * Example: "maktapga" → stem "maktap" + suffix "ga"
+ *          → fuzzy match "maktap" → "maktab"
+ *          → reassemble → "maktabga"
+ */
+function generateStemSuffixCandidates(
+  input: string,
+  seen: Set<string>,
+  customDict?: Set<string>
+): string[] {
+  const normalized = normalizeApostrophe(input.toLowerCase());
+  const candidates: string[] = [];
+  const roots = getDictRoots();
+  const customRoots = customDict ? Array.from(customDict).map(w => normalizeApostrophe(w.toLowerCase())) : [];
+  const allRoots = customRoots.length > 0 ? [...roots, ...customRoots] : roots;
+
+  // Try each possible suffix
+  for (const suffix of ALL_SUFFIXES) {
+    if (!normalized.endsWith(suffix)) continue;
+    const stem = normalized.slice(0, -suffix.length);
+
+    // Guard: stem must be long enough to avoid aggressive stripping
+    if (stem.length < MIN_STEM_LENGTH) continue;
+
+    // If the stem IS in the dictionary, the word is a valid form — skip
+    // (this case is handled by the normal candidate flow)
+    if (inDictionary(stem)) continue;
+
+    // Fuzzy match the stem against dictionary roots
+    for (const root of allRoots) {
+      const lev = levenshtein(stem, root);
+      if (lev > MAX_STEM_EDIT_DISTANCE) continue;
+
+      // Reassemble: corrected stem + suffix
+      const fullForm = root + suffix;
+      if (fullForm === normalized) continue;  // Don't suggest the same word
+      if (seen.has(fullForm)) continue;
+
+      // Sanity check: the full form should ideally be a valid form
+      // (in dictionary or valid morphological form).
+      // But we also accept close matches even if not in allForms,
+      // because the ranker will filter them.
+      candidates.push(fullForm);
+      seen.add(fullForm);
+    }
+  }
+
+  return candidates;
 }
 
 /**
@@ -80,7 +169,7 @@ export function findCandidates(
   }
   const fullPool = customCandidates.length ? [...pool, ...customCandidates] : pool;
 
-  // Collect raw candidates by edit distance
+  // Collect raw candidates by edit distance (whole-word matching)
   const rawCandidates: string[] = [];
   const seen = new Set<string>();
 
@@ -99,7 +188,7 @@ export function findCandidates(
     }
   }
 
-  // Also generate suffix variants if the input has a case suffix
+  // Generate suffix variants if the input has a case suffix
   const inputSplit = splitCaseSuffix(normalized);
   if (inputSplit) {
     const caseSuffixes = ['ga', 'ka', 'qa', 'da', 'ta', 'dan', 'tan', 'ni', 'ning'];
@@ -111,6 +200,12 @@ export function findCandidates(
       }
     }
   }
+
+  // Generate stem+suffix decomposition candidates
+  // This handles misspelled-stem + valid-suffix cases like:
+  // "maktapga" → stem "maktap" → fuzzy → "maktab" → "maktabga"
+  const stemSuffixCandidates = generateStemSuffixCandidates(input, seen, customDict);
+  rawCandidates.push(...stemSuffixCandidates);
 
   // Rank candidates using the multi-factor system
   const ranked: RankedCandidate[] = rankCandidates(input, rawCandidates, { context: contextInfo, customDict });

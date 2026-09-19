@@ -466,4 +466,42 @@ export const TEST_DATASET: TestCase[] = [
   { id: 313, category: 'correct_sentence', input: 'Bolalar maktabdan keldilar.', expectError: false, shouldNotFlag: ['maktabdan'] },
   { id: 314, category: 'correct_sentence', input: 'Oʻqituvchi darsga keldi.', expectError: false, shouldNotFlag: ['darsga'] },
   { id: 315, category: 'correct_sentence', input: 'Men doʻstimga xat yozdim.', expectError: false, shouldNotFlag: ['doʻstimga'] },
+
+  // ===================================================================
+  // STEM + SUFFIX DECOMPOSITION (misspelled stem + valid suffix)
+  // ===================================================================
+  // Core regression tests — maktab variants
+  { id: 316, category: 'stem_suffix', input: 'Men maktapga bordim.', expectError: true, expectedWord: 'maktapga', expectedSuggestion: 'maktabga' },
+  { id: 317, category: 'stem_suffix', input: 'U matkabga keldi.', expectError: true, expectedWord: 'matkabga', expectedSuggestion: 'maktabga' },
+  { id: 318, category: 'stem_suffix', input: 'Men makrabga bordim.', expectError: true, expectedWord: 'makrabga', expectedSuggestion: 'maktabga' },
+  // Correct form — must NOT be flagged
+  { id: 319, category: 'stem_suffix', input: 'Men maktabga bordim.', expectError: false, shouldNotFlag: ['maktabga'] },
+  // Other words with misspelled stem + suffix
+  { id: 320, category: 'stem_suffix', input: 'U kittobda oʻqidi.', expectError: true, expectedWord: 'kittobda', expectedSuggestion: 'kitobda' },
+  { id: 321, category: 'stem_suffix', input: 'Men shaarga bordim.', expectError: true, expectedWord: 'shaarga', expectedSuggestion: 'shaharga' },
+  { id: 322, category: 'stem_suffix', input: 'U shaharda yashaydi.', expectError: false, shouldNotFlag: ['shaharda'] },
+  { id: 323, category: 'stem_suffix', input: 'Men bolaga berdim.', expectError: false, shouldNotFlag: ['bolaga'] },
+  { id: 324, category: 'stem_suffix', input: 'U bolani koʻrdi.', expectError: false, shouldNotFlag: ['bolani'] },
+  { id: 325, category: 'stem_suffix', input: 'Men bolga berdim.', expectError: true, expectedWord: 'bolga', expectedSuggestion: 'bolaga' },
+  // Misspelled stem + locative suffix
+  { id: 326, category: 'stem_suffix', input: 'U maktapda oʻqidi.', expectError: true, expectedWord: 'maktapda', expectedSuggestion: 'maktabda' },
+  { id: 327, category: 'stem_suffix', input: 'Men kitobda oʻqidim.', expectError: false, shouldNotFlag: ['kitobda'] },
+  // Misspelled stem + dative suffix with different words
+  { id: 328, category: 'stem_suffix', input: 'Men bozorga bordim.', expectError: false, shouldNotFlag: ['bozorga'] },
+  { id: 329, category: 'stem_suffix', input: 'U bozzorga keldi.', expectError: true, expectedWord: 'bozzorga', expectedSuggestion: 'bozorga' },
+  { id: 330, category: 'stem_suffix', input: 'Men toshkentga bordim.', expectError: false, shouldNotFlag: ['toshkentga'] },
+  // Misspelled stem + ablative suffix
+  { id: 331, category: 'stem_suffix', input: 'Men maktapdan keldim.', expectError: true, expectedWord: 'maktapdan', expectedSuggestion: 'maktabdan' },
+  { id: 332, category: 'stem_suffix', input: 'U maktabdan keldi.', expectError: false, shouldNotFlag: ['maktabdan'] },
+  // Misspelled stem + accusative suffix
+  { id: 333, category: 'stem_suffix', input: 'Men kitobn oldim.', expectError: false, shouldNotFlag: ['kitobn'] },
+  { id: 334, category: 'stem_suffix', input: 'U kittobni oldi.', expectError: true, expectedWord: 'kittobni', expectedSuggestion: 'kitobni' },
+  // Misspelled stem + genitive suffix
+  { id: 335, category: 'stem_suffix', input: 'Men shaarning koʻchasi.', expectError: true, expectedWord: 'shaarning', expectedSuggestion: 'shaharning' },
+  { id: 336, category: 'stem_suffix', input: 'U shaharning koʻchasi.', expectError: false, shouldNotFlag: ['shaharning'] },
+  // Correct forms with suffixes — must not be flagged
+  { id: 337, category: 'stem_suffix', input: 'Ular maktabga bordilar.', expectError: false, shouldNotFlag: ['maktabga'] },
+  { id: 338, category: 'stem_suffix', input: 'Men kitobimni oʻqidim.', expectError: false, shouldNotFlag: ['kitobimni'] },
+  { id: 339, category: 'stem_suffix', input: 'Bola maktabdan keldi.', expectError: false, shouldNotFlag: ['maktabdan'] },
+  { id: 340, category: 'stem_suffix', input: 'U shaharda yashaydi.', expectError: false, shouldNotFlag: ['shaharda'] },
 ];
