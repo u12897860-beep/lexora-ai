@@ -22,6 +22,8 @@ export interface Suggestion {
 }
 
 export interface Correction {
+  /** Stable identifier when the correction was produced by RuleEngine. */
+  ruleId?: string;
   original: string;
   start: number;
   end: number;

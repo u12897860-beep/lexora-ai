@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "benchmark": "esbuild src/lib/benchmark.ts --bundle --platform=node --format=esm --outfile=/tmp/lexora-benchmark.mjs && node /tmp/lexora-benchmark.mjs",
-    "test:apostrophe": "esbuild src/lib/apostropheRegression.test.ts --bundle --platform=node --format=esm --outfile=/tmp/lexora-apostrophe-test.mjs && node /tmp/lexora-apostrophe-test.mjs"
+    "test:apostrophe": "esbuild src/lib/apostropheRegression.test.ts --bundle --platform=node --format=esm --outfile=/tmp/lexora-apostrophe-test.mjs && node /tmp/lexora-apostrophe-test.mjs",
+    "test:rules": "esbuild src/lib/ruleEngine.test.ts --bundle --platform=node --format=esm --outfile=/tmp/lexora-rule-test.mjs && node /tmp/lexora-rule-test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
