@@ -1,20 +1,48 @@
 // Text utilities for Uzbek: apostrophe normalization, transliteration,
 // tokenization, script detection.
 
-const APOSTROPHE_VARIANTS = ['ʻ', 'ʼ', '’', '‘', '`', '\u2019', '\u2018'];
+/** The character used internally by every language-processing module. */
+export const CANONICAL_UZBEK_APOSTROPHE = 'ʻ';
 
-/** Normalize all apostrophe variants to a single canonical form (ʻ). */
+// Keep this list deliberately narrow. In particular, a quote is only treated
+// as an Uzbek apostrophe when it follows O/o or G/g (see the helper below).
+const APOSTROPHE_VARIANTS = new Set(["'", '‘', '’', 'ʻ', 'ʼ', '`']);
+
+function isUzbekApostropheAt(text: string, index: number): boolean {
+  if (!APOSTROPHE_VARIANTS.has(text[index])) return false;
+
+  const previous = text[index - 1];
+  if (!/[oOgG]/.test(previous ?? '')) return false;
+
+  // Oʻ/Gʻ followed by a letter is unambiguously part of a word. A final
+  // apostrophe is also valid after g (for example, "togʻ"). Requiring this
+  // context prevents ordinary opening/closing quotes from becoming letters.
+  const next = text[index + 1];
+  return /[a-zA-Z]/.test(next ?? '') || /[gG]/.test(previous);
+}
+
+/**
+ * Normalize apostrophes that form the Uzbek Oʻ/oʻ and Gʻ/gʻ letters.
+ *
+ * This is a one-code-unit-for-one-code-unit substitution: it intentionally
+ * does not call String.normalize(), so offsets in the user's original UTF-16
+ * text remain valid. Quotes and apostrophes outside an Uzbek letter are left
+ * untouched.
+ */
 export function normalizeApostrophe(text: string): string {
-  let result = text;
-  for (const a of APOSTROPHE_VARIANTS) {
-    result = result.split(a).join('ʻ');
+  let result = '';
+  for (let i = 0; i < text.length; i++) {
+    result += isUzbekApostropheAt(text, i) ? CANONICAL_UZBEK_APOSTROPHE : text[i];
   }
-  // Also handle the common straight apostrophe between vowels (o' g')
-  // But ONLY in the specific o'/g' context, not as a general replace,
-  // since straight ' could be a quote.
-  result = result.replace(/o'/g, 'oʻ').replace(/g'/g, 'gʻ');
-  result = result.replace(/O'/g, 'Oʻ').replace(/G'/g, 'Gʻ');
   return result;
+}
+
+/** True when a word contains a recognized, non-canonical Uzbek apostrophe. */
+export function hasNonCanonicalUzbekApostrophe(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    if (isUzbekApostropheAt(text, i) && text[i] !== CANONICAL_UZBEK_APOSTROPHE) return true;
+  }
+  return false;
 }
 
 /** Lowercase that preserves special characters. */
@@ -24,6 +52,7 @@ export function lower(text: string): string {
 
 export interface Token {
   text: string;        // the raw token text
+  normalizedText: string; // canonical analysis form (same UTF-16 length)
   start: number;       // start index in original text
   end: number;         // end index
   isWord: boolean;     // true if this is a word (letters), false if punctuation/space
@@ -34,31 +63,31 @@ export function tokenize(text: string): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   while (i < text.length) {
-    const ch = text[i];
     // Check if it's a letter (including Uzbek special chars)
-    if (isLetter(ch)) {
+    if (isWordCharacter(text, i)) {
       let j = i;
-      while (j < text.length && isLetter(text[j])) j++;
-      tokens.push({ text: text.slice(i, j), start: i, end: j, isWord: true });
+      while (j < text.length && isWordCharacter(text, j)) j++;
+      const raw = text.slice(i, j);
+      tokens.push({ text: raw, normalizedText: normalizeApostrophe(raw), start: i, end: j, isWord: true });
       i = j;
     } else {
       let j = i;
-      while (j < text.length && !isLetter(text[j])) j++;
-      tokens.push({ text: text.slice(i, j), start: i, end: j, isWord: false });
+      while (j < text.length && !isWordCharacter(text, j)) j++;
+      const raw = text.slice(i, j);
+      tokens.push({ text: raw, normalizedText: raw, start: i, end: j, isWord: false });
       i = j;
     }
   }
   return tokens;
 }
 
-function isLetter(ch: string): boolean {
+function isWordCharacter(text: string, index: number): boolean {
+  const ch = text[index];
   // Latin letters
   if (/[a-zA-Z]/.test(ch)) return true;
   // Cyrillic letters
   if (/[а-яА-ЯёЁ]/.test(ch)) return true;
-  // Uzbek special characters
-  if ('ʻʼ’‘`'.includes(ch)) return true;
-  return false;
+  return isUzbekApostropheAt(text, index);
 }
 
 /** Detect if text is predominantly Cyrillic or Latin. */

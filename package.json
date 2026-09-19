@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
-    "benchmark": "npx tsx src/lib/benchmark.ts"
+    "benchmark": "esbuild src/lib/benchmark.ts --bundle --platform=node --format=esm --outfile=/tmp/lexora-benchmark.mjs && node /tmp/lexora-benchmark.mjs",
+    "test:apostrophe": "esbuild src/lib/apostropheRegression.test.ts --bundle --platform=node --format=esm --outfile=/tmp/lexora-apostrophe-test.mjs && node /tmp/lexora-apostrophe-test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

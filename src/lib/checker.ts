@@ -6,7 +6,14 @@
 //   CANDIDATE GENERATION → CANDIDATE RANKING → CONFIDENCE → CORRECTION
 
 import { Correction, CheckResult, Suggestion, StyleMode } from './types';
-import { tokenize, normalizeApostrophe, detectScript, capitalize, cyrillicToLatin } from './text';
+import {
+  tokenize,
+  normalizeApostrophe,
+  hasNonCanonicalUzbekApostrophe,
+  detectScript,
+  capitalize,
+  cyrillicToLatin,
+} from './text';
 import { inDictionary, isValidForm } from './morphology';
 import { findCandidates } from './fuzzy';
 import { analyzeCaseSuffix } from './suffixEngine';
@@ -127,7 +134,7 @@ export function checkText(text: string, options: CheckOptions = {}): CheckResult
 
   // Build word list for context analysis
   const wordTokens = (script === 'cyrillic' ? analyzeTokens : tokens).filter(t => t.isWord);
-  const wordTexts = wordTokens.map(t => normalizeApostrophe(t.text.toLowerCase()));
+  const wordTexts = wordTokens.map(t => t.normalizedText.toLowerCase());
 
   let wordIndex = -1;
   for (const token of (script === 'cyrillic' ? analyzeTokens : tokens)) {
@@ -137,26 +144,29 @@ export function checkText(text: string, options: CheckOptions = {}): CheckResult
     const isFirstWord = wordIndex === 0;
 
     // Skip if in custom dictionary
-    if (customSet.has(normalizeApostrophe(word.toLowerCase()))) continue;
+    if (customSet.has(token.normalizedText.toLowerCase())) continue;
 
     // Skip technical terms
     if (isTechnicalTerm(word)) continue;
 
+    // Unicode spelling of an Uzbek letter is independent of dictionary
+    // coverage. Report that normalization directly rather than letting an
+    // unknown but otherwise well-formed word fall through to fuzzy ranking.
+    if (hasNonCanonicalUzbekApostrophe(word)) {
+      const fixed = normalizeApostrophe(word);
+      corrections.push({
+        original: word,
+        start: token.start,
+        end: token.end,
+        type: 'spelling',
+        suggestions: [{ word: fixed, confidence: 0.95, reason: 'Apostrof belgisi notoʻgʻri' }],
+        explanation: 'Apostrof belgisi standart shaklda emas. Oʻzbek lotin yozuvida ʻ belgisi ishlatiladi.',
+      });
+      continue;
+    }
+
     // Named entity protection
     if (isNamedEntity(word)) {
-      // Check for apostrophe normalization issues on named entities
-      const hasNonStandardApostrophe = word !== normalizeApostrophe(word) && /[oOgG][''`ʻʼ]/.test(word.replace(/oʻ|gʻ/g, ''));
-      if (hasNonStandardApostrophe) {
-        const fixed = normalizeApostrophe(word);
-        corrections.push({
-          original: word,
-          start: token.start,
-          end: token.end,
-          type: 'spelling',
-          suggestions: [{ word: fixed, confidence: 0.95, reason: 'Apostrof belgisi notoʻgʻri' }],
-          explanation: 'Apostrof belgisi standart shaklda emas. Oʻzbek lotin yozuvida ʻ belgisi ishlatiladi.',
-        });
-      }
       continue;
     }
 
@@ -212,21 +222,8 @@ export function checkText(text: string, options: CheckOptions = {}): CheckResult
     }
 
     // Check if word is valid (in dictionary or valid morphological form)
-    const normalized = normalizeApostrophe(word.toLowerCase());
+    const normalized = token.normalizedText.toLowerCase();
     if (inDictionary(normalized) || isValidForm(normalized)) {
-      // Check for apostrophe normalization issues
-      const hasNonStandardApostrophe = word !== normalizeApostrophe(word) && /[oOgG][''`ʻʼ]/.test(word.replace(/oʻ|gʻ/g, ''));
-      if (hasNonStandardApostrophe) {
-        const fixed = normalizeApostrophe(word);
-        corrections.push({
-          original: word,
-          start: token.start,
-          end: token.end,
-          type: 'spelling',
-          suggestions: [{ word: fixed, confidence: 0.95, reason: 'Apostrof belgisi notoʻgʻri' }],
-          explanation: 'Apostrof belgisi standart shaklda emas. Oʻzbek lotin yozuvida ʻ belgisi ishlatiladi.',
-        });
-      }
       continue; // Word is valid, no correction needed
     }
 
