@@ -6,8 +6,9 @@
 import { checkText } from './checker';
 import { TEST_DATASET, TestCase } from './testDataset';
 import { normalizeApostrophe } from './text';
+import { RULE_ENGINE_CATEGORIES, RULE_ENGINE_TEST_DATASET } from './ruleEngineBenchmarkDataset';
 
-interface TestResult {
+export interface TestResult {
   testCase: TestCase;
   passed: boolean;
   outcome: 'TP' | 'TN' | 'FP' | 'FN' | 'WRONG_SUGGESTION';
@@ -16,7 +17,7 @@ interface TestResult {
   detail: string;
 }
 
-interface CategoryStats {
+export interface CategoryStats {
   category: string;
   total: number;
   passed: number;
@@ -29,7 +30,7 @@ interface CategoryStats {
   accuracy: number;
 }
 
-interface BenchmarkSummary {
+export interface BenchmarkSummary {
   totalTests: number;
   passed: number;
   failed: number;
@@ -162,10 +163,10 @@ function runTest(tc: TestCase): TestResult {
 /**
  * Run the full benchmark and print results.
  */
-export function runBenchmark(): BenchmarkSummary {
+export function runBenchmark(dataset: readonly TestCase[] = TEST_DATASET): BenchmarkSummary {
   const results: TestResult[] = [];
 
-  for (const tc of TEST_DATASET) {
+  for (const tc of dataset) {
     const tr = runTest(tc);
     results.push(tr);
   }
@@ -288,6 +289,19 @@ export function printBenchmarkReport(summary: BenchmarkSummary): void {
   console.log(`  Correction Accuracy:${pct(summary.correctionAccuracy)}`);
   console.log('');
 
+  const ruleCategories = new Set<string>(RULE_ENGINE_CATEGORIES);
+  const ruleStats = summary.categoryStats.filter(category => ruleCategories.has(category.category));
+  if (ruleStats.length > 0) {
+    const total = ruleStats.reduce((sum, category) => sum + category.total, 0);
+    const passed = ruleStats.reduce((sum, category) => sum + category.passed, 0);
+    console.log('── RULEENGINE AGGREGATE ──────────────────────────────────');
+    console.log(`  Total:              ${total}`);
+    console.log(`  Passed:             ${passed}`);
+    console.log(`  Failed:             ${total - passed}`);
+    console.log(`  Accuracy:           ${pct(total > 0 ? passed / total : 0)}`);
+    console.log('');
+  }
+
   console.log('── PER-CATEGORY RESULTS (sorted by accuracy, ascending) ──');
   console.log('  Category               Total  Pass  Fail  TP   TN   FP   FN   WS   Acc');
   console.log('  ────────────────────────────────────────────────────────────────────────');
@@ -324,12 +338,26 @@ export function printBenchmarkReport(summary: BenchmarkSummary): void {
     console.log('');
   }
 
+  const ruleFailures = summary.failures.filter(failure => ruleCategories.has(failure.testCase.category));
+  if (ruleFailures.length > 0) {
+    console.log('── ALL RULEENGINE FAILURES ───────────────────────────────');
+    for (const failure of ruleFailures) {
+      console.log(`  [${failure.outcome}] #${failure.testCase.id} (${failure.testCase.category})`);
+      console.log(`    Input:    "${failure.testCase.input}"`);
+      console.log(`    Reason:   ${failure.detail}`);
+    }
+    console.log('');
+  }
+
   console.log('═══════════════════════════════════════════════════════════');
   console.log('');
 }
 
 // CLI entry point when run directly via tsx
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const summary = runBenchmark();
+  const expanded = process.argv.includes('--expanded');
+  const dataset = expanded ? [...TEST_DATASET, ...RULE_ENGINE_TEST_DATASET] : TEST_DATASET;
+  console.log(expanded ? 'Dataset: expanded (legacy + RuleEngine)' : 'Dataset: legacy');
+  const summary = runBenchmark(dataset);
   printBenchmarkReport(summary);
 }
