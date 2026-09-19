@@ -13,7 +13,8 @@
     "benchmark:legacy": "npm run benchmark",
     "benchmark:expanded": "esbuild src/lib/benchmark.ts --bundle --platform=node --format=esm --outfile=/tmp/lexora-benchmark.mjs && node /tmp/lexora-benchmark.mjs --expanded",
     "test:apostrophe": "esbuild src/lib/apostropheRegression.test.ts --bundle --platform=node --format=esm --outfile=/tmp/lexora-apostrophe-test.mjs && node /tmp/lexora-apostrophe-test.mjs",
-    "test:rules": "esbuild src/lib/ruleEngine.test.ts --bundle --platform=node --format=esm --outfile=/tmp/lexora-rule-test.mjs && node /tmp/lexora-rule-test.mjs"
+    "test:rules": "esbuild src/lib/ruleEngine.test.ts --bundle --platform=node --format=esm --outfile=/tmp/lexora-rule-test.mjs && node /tmp/lexora-rule-test.mjs",
+    "test:morphology": "esbuild src/lib/morphology.test.ts --bundle --platform=node --format=esm --outfile=/tmp/lexora-morphology-test.mjs && node /tmp/lexora-morphology-test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
