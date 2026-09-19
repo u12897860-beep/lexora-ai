@@ -49,7 +49,7 @@ function hasPlainGap(text: string, left: Token, right: Token): boolean {
 
 function isVerbForm(value: string): boolean {
   const analysis = analyzeWord(value);
-  return analysis?.pos === 'verb' || /(di|gan|man|miz|siz|san|yapmiz|yapman|aman|adi)$/.test(value);
+  return analysis?.pos === 'verb' || /(di|dingiz|gan|man|miz|siz|san|yapmiz|yapman|aman|adi)$/.test(value);
 }
 
 function isFiniteVerbForm(value: string): boolean {
@@ -100,8 +100,11 @@ function possessiveNing(text: string, tokens: Token[]): RuleMatch[] {
     const ownerAnalysis = analyzeWord(ownerValue);
     const possessedAnalysis = analyzeWord(possessedValue);
     const kinshipOwner = /^(dadam|onam|akam|ukam|opam|singlim)ni$/.test(ownerValue);
+    // -si is an unambiguous third-person possessive marker in this nominal
+    // construction. Requiring its stem to be in the finite dictionary caused
+    // safe genitive agreement checks to depend on dictionary coverage.
     const possessiveNoun = possessedAnalysis?.pos === 'noun' && possessedAnalysis.posessive !== null
-      || (possessedValue.endsWith('si') && inDictionary(possessedValue.slice(0, -2)))
+      || (possessedValue.length > 4 && possessedValue.endsWith('si'))
       || (possessedValue.endsWith('i') && inDictionary(possessedValue.slice(0, -1)));
     if (!(ownerAnalysis?.case === 'acc' && ['noun', 'pron'].includes(ownerAnalysis.pos ?? '')) && !kinshipOwner) continue;
     if (!possessiveNoun) continue;
@@ -133,9 +136,14 @@ function semanticRules(tokens: Token[]): RuleMatch[] {
   for (let i = 0; i < tokens.length; i++) {
     const value = values[i];
     const window = new Set(values.slice(Math.max(0, i - 3), i + 4));
-    if (value === 'boʻlmasa' && window.has('men')) {
+    // Prefer the closest explicit subject before the conditional. This avoids
+    // carrying an earlier first-person subject across a new clause (for
+    // example, "Men aytdim: u boʻlmasa ...").
+    const precedingSubjects = values.slice(Math.max(0, i - 3), i).filter(item => ['men', 'u', 'ular'].includes(item));
+    const subject = precedingSubjects[precedingSubjects.length - 1];
+    if (value === 'boʻlmasa' && subject === 'men') {
       result.push(match('bolmasa_person', tokens[i].text, preserveInitial(tokens[i].text, 'boʻlmasam'), tokens[i].start, tokens[i].end, 'Men olmoshi bilan birinchi shaxs shakli -m talab qilinadi.', 0.98));
-    } else if (value === 'boʻlmasam' && (window.has('u') || window.has('ular'))) {
+    } else if (value === 'boʻlmasam' && (subject === 'u' || subject === 'ular')) {
       result.push(match('bolmasa_person', tokens[i].text, preserveInitial(tokens[i].text, 'boʻlmasa'), tokens[i].start, tokens[i].end, 'U/ular bilan uchinchi shaxs shart shakli ishlatiladi.', 0.98));
     }
     if (value === 'xolos' && [...window].some(cue => RELEASE_CUES.has(cue))) {
