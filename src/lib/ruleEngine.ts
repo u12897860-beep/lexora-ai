@@ -1,6 +1,8 @@
 import { analyzeWord, inDictionary, isValidForm } from './morphology';
 import { normalizeApostrophe, tokenize, Token } from './text';
 import { Correction } from './types';
+import { analyzeContext } from './contextEngine';
+import { splitCaseSuffix } from './phonetics';
 
 export type RuleId =
   | 'particle_hyphen'
@@ -10,7 +12,9 @@ export type RuleId =
   | 'bolmasa_person'
   | 'xalos_xolos'
   | 'suffix_li_lik'
-  | 'lar_giz';
+  | 'lar_giz'
+  | 'context_case_agreement'
+  | 'missing_buffer_vowel';
 
 export interface RuleMatch extends Correction {
   ruleId: RuleId;
@@ -181,6 +185,87 @@ function larGizRules(tokens: Token[]): RuleMatch[] {
   return result;
 }
 
+/**
+ * Correct an already-marked case only when a following verb has one clear
+ * government pattern.  Merely seeing an unknown noun is deliberately not
+ * enough: this rule requires a known stem and a high-confidence ContextEngine
+ * result, so genuinely ambiguous uses remain untouched.
+ */
+function contextCaseAgreement(tokens: Token[]): RuleMatch[] {
+  const result: RuleMatch[] = [];
+  const values = tokens.map(norm);
+  const endings = { dat: 'ga', loc: 'da' } as const;
+
+  for (let i = 0; i < tokens.length; i++) {
+    const split = splitCaseSuffix(values[i]);
+    if (!split || !inDictionary(split.stem)) continue;
+    if (split.suffix !== 'ga' && split.suffix !== 'da') continue;
+
+    const context = analyzeContext(values, i);
+    if (context.confidence < 0.8 || (context.expectedCase !== 'dat' && context.expectedCase !== 'loc')) continue;
+    const expected = endings[context.expectedCase];
+    if (split.suffix === expected) continue;
+
+    const suggestion = preserveInitial(tokens[i].text, split.stem + expected);
+    result.push(match('context_case_agreement', tokens[i].text, suggestion, tokens[i].start, tokens[i].end, context.reason, 0.9));
+  }
+  return result;
+}
+
+/**
+ * Uzbek inserts a buffer vowel before several consonant-initial personal and
+ * possessive endings.  The subject and a dictionary-backed stem make these
+ * omissions substantially less ambiguous than general edit-distance fixes.
+ */
+function missingBufferVowel(tokens: Token[]): RuleMatch[] {
+  const result: RuleMatch[] = [];
+  const values = tokens.map(norm);
+
+  for (let i = 0; i < tokens.length; i++) {
+    const subject = values[i - 1] ?? '';
+    const value = values[i];
+    let stem = '';
+    let suggestion = '';
+
+    const patterns: Array<[boolean, string, string]> = [
+      [subject === 'men' && value.endsWith('dm'), 'dm', 'dim'],
+      [subject === 'biz' && value.endsWith('dk'), 'dk', 'dik'],
+      [subject === 'ular' && value.endsWith('dlar'), 'dlar', 'dilar'],
+    ];
+    for (const [applies, malformed, repaired] of patterns) {
+      if (!applies) continue;
+      stem = value.slice(0, -malformed.length);
+      if (/[^aeiouʻ]$/.test(stem) && analyzeWord(stem)?.pos === 'verb') suggestion = stem + repaired;
+    }
+
+    if (!suggestion && subject === 'biz' && value.endsWith('ymiz')) {
+      const consonantStem = value.slice(0, -4);
+      if (analyzeWord(consonantStem + 'a')?.pos === 'verb') suggestion = consonantStem + 'aymiz';
+    }
+
+    if (!suggestion) {
+      const possessive = subject === 'men' ? ['m', 'im']
+        : subject === 'biz' ? ['miz', 'imiz']
+        : subject === 'siz' ? ['ngiz', 'ingiz']
+        : null;
+      if (possessive && value.endsWith(possessive[0])) {
+        stem = value.slice(0, -possessive[0].length);
+        if (analyzeWord(stem)?.pos === 'noun') suggestion = stem + possessive[1];
+      }
+    }
+
+    if (!suggestion && value.endsWith('lr')) {
+      stem = value.slice(0, -2);
+      if (/[aeiou]$/.test(stem) && analyzeWord(stem)?.pos === 'noun') suggestion = stem + 'lar';
+    }
+
+    if (suggestion) {
+      result.push(match('missing_buffer_vowel', tokens[i].text, preserveInitial(tokens[i].text, suggestion), tokens[i].start, tokens[i].end, 'Qoʻshimcha oldidan talab qilinadigan bogʻlovchi unli tushib qolgan.', 0.94));
+    }
+  }
+  return result;
+}
+
 /** Run conservative, context-sensitive rules before lexical spell checking. */
 export function applyRuleEngine(text: string): RuleMatch[] {
   const tokens = words(text);
@@ -191,5 +276,7 @@ export function applyRuleEngine(text: string): RuleMatch[] {
     ...semanticRules(tokens),
     ...suffixRules(text, tokens),
     ...larGizRules(tokens),
+    ...contextCaseAgreement(tokens),
+    ...missingBufferVowel(tokens),
   ].sort((a, b) => a.start - b.start || a.end - b.end);
 }

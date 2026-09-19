@@ -36,7 +36,6 @@ const LOCATIVE_VERBS = new Set([
   'topildim', 'topildi', 'topildik',
   'koʻrdim', 'koʻrdi', 'koʻrdik', 'koʻraman', 'koʻradi',
   'uchratdim', 'uchratdi',
-  'boraman', 'borasan', 'boradi', 'boramiz', 'borasiz', 'boradilar',
 ]);
 
 // Verbs that strongly imply dative case (-ga) for the preceding noun
@@ -97,6 +96,16 @@ export function analyzeContext(
 
     // Skip common particles
     if (['ham', 'da', 'chi', 'ku', 'mas', 'eaxir', 'axir'].includes(nextWord)) continue;
+
+    // These verbs license more than one construction.  Context alone cannot
+    // safely choose a case for them.
+    if (AMBIGUOUS_VERBS.has(nextWord)) {
+      return {
+        expectedCase: null,
+        confidence: 0,
+        reason: 'Feʼl bir nechta kelishik bilan ishlatilishi mumkin',
+      };
+    }
 
     if (DATIVE_VERBS.has(nextWord)) {
       // Check if it's also a locative verb (ambiguous)

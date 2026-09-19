@@ -41,6 +41,11 @@ const cases: Case[] = [
   { kind: 'positive', text: 'Nega kech qoldingizlar?', ruleId: 'lar_giz', suggestion: 'qoldingiz' },
   { kind: 'negative', text: 'Xush keldingiz!' },
   { kind: 'ambiguous', text: 'Kech qoldilaringiz.' },
+  { kind: 'positive', text: 'Men shaharda bordim.', ruleId: 'context_case_agreement', suggestion: 'shaharga' },
+  { kind: 'ambiguous', text: 'U maktabga oʻqidi.' },
+  { kind: 'positive', text: 'Men doʻstm.', ruleId: 'missing_buffer_vowel', suggestion: 'doʻstim' },
+  { kind: 'positive', text: 'Biz keldk.', ruleId: 'missing_buffer_vowel', suggestion: 'keldik' },
+  { kind: 'positive', text: 'Ular bordlar.', ruleId: 'missing_buffer_vowel', suggestion: 'bordilar' },
 ];
 
 let positive = 0, negative = 0, ambiguous = 0;
