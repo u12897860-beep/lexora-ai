@@ -265,23 +265,22 @@ export function rankCandidates(
     });
   }
 
-  // CandidateRanker v2: keep the proven global weights, but make near-ties
-  // deterministic. A tiny score difference is often frequency noise; prefer
-  // the candidate that preserves morphology/context and is closer to input.
+  // CandidateRanker v2: preserve the proven score order. Only break
+  // effectively exact ties; wider near-tie reordering caused a legacy
+  // correction regression by pushing a valid suggestion out of the top five.
   ranked.sort((a, b) => {
     const scoreDelta = b.score - a.score;
-    if (Math.abs(scoreDelta) > 0.015) return scoreDelta;
+    if (Math.abs(scoreDelta) > 0.001) return scoreDelta;
+
+    const aDistance = levenshtein(inputNorm, a.word);
+    const bDistance = levenshtein(inputNorm, b.word);
+    if (aDistance !== bDistance) return aDistance - bDistance;
 
     const aStructural = a.components.morphology + a.components.suffix + a.components.context;
     const bStructural = b.components.morphology + b.components.suffix + b.components.context;
     const structuralDelta = bStructural - aStructural;
     if (Math.abs(structuralDelta) > 0.05) return structuralDelta;
 
-    const aDistance = levenshtein(inputNorm, a.word);
-    const bDistance = levenshtein(inputNorm, b.word);
-    if (aDistance !== bDistance) return aDistance - bDistance;
-
-    // Final stable tie-break: stronger dictionary evidence, then frequency.
     const dictDelta = b.components.dictionary - a.components.dictionary;
     if (dictDelta !== 0) return dictDelta;
     return b.components.frequency - a.components.frequency;
