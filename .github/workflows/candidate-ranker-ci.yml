@@ -1,0 +1,23 @@
+name: CandidateRanker CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:morphology
+      - run: npm run test:rules
+      - run: npm run test:apostrophe
+      - run: npm run benchmark:legacy
+      - run: npm run benchmark:expanded
