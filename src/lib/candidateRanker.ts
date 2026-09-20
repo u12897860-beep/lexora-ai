@@ -265,7 +265,27 @@ export function rankCandidates(
     });
   }
 
-  ranked.sort((a, b) => b.score - a.score);
+  // CandidateRanker v2: keep the proven global weights, but make near-ties
+  // deterministic. A tiny score difference is often frequency noise; prefer
+  // the candidate that preserves morphology/context and is closer to input.
+  ranked.sort((a, b) => {
+    const scoreDelta = b.score - a.score;
+    if (Math.abs(scoreDelta) > 0.015) return scoreDelta;
+
+    const aStructural = a.components.morphology + a.components.suffix + a.components.context;
+    const bStructural = b.components.morphology + b.components.suffix + b.components.context;
+    const structuralDelta = bStructural - aStructural;
+    if (Math.abs(structuralDelta) > 0.05) return structuralDelta;
+
+    const aDistance = levenshtein(inputNorm, a.word);
+    const bDistance = levenshtein(inputNorm, b.word);
+    if (aDistance !== bDistance) return aDistance - bDistance;
+
+    // Final stable tie-break: stronger dictionary evidence, then frequency.
+    const dictDelta = b.components.dictionary - a.components.dictionary;
+    if (dictDelta !== 0) return dictDelta;
+    return b.components.frequency - a.components.frequency;
+  });
   return ranked;
 }
 
